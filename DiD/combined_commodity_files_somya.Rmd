@@ -1,0 +1,572 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+rm(list = ls())
+library(openxlsx)
+library(plyr)
+library(dplyr)
+library(lubridate)
+library(broom)
+library(ggplot2)
+clx <-function(fm, dfcw, cluster){
+  library(sandwich)
+  library(lmtest)
+  M <- length(unique(cluster))
+  N <- length(cluster)
+  dfc <- (M/(M-1))*((N-1)/(N-fm$rank))
+  u <- apply(estfun(fm),2,function(x) tapply(x, cluster, sum))
+  vcovCL <- dfc*sandwich(fm, meat=crossprod(u)/N)*dfcw
+  coeftest(fm, vcovCL) }
+intervention= as.data.frame(read.xlsx("/Users/somyasinghvi/Dropbox (MIT)/jingwen_tasks/infrastructure_characteristics/Market Details.xlsx",sheet = "Market Live Dates"))[3:160,]
+intervention$X3 = tolower(as.character(intervention$X3))
+temp = read.csv("/Users/somyasinghvi/Dropbox (MIT)/jingwen_tasks/CombinedArrivals/intervented change to organized.csv",header = F)
+colnames(temp) = c("int","org")
+temp$int = as.character(temp$int)
+temp$org = as.character(temp$org)
+inind = intervention$X3%in%temp$int
+orind = match(intervention$X3[inind],temp$int)
+intervention$X3[inind] = temp$org[orind]
+intervented = tolower(as.character(intervention$X3))
+intervented = c(intervented,"virtual")
+interdate = as.Date(as.numeric(as.character(intervention$X4))-25569,origin = "1970-01-01")
+interdate = as.Date(cut(interdate,breaks = "month"))
+
+Product = c("Groundnut","Jowar(Sorghum)","Maize","Sunflower","Arhar (Tur-Red Gram)","Cotton","Green Gram (Moong)","Arecanut(Betelnut-Supari)","Bengal Gram(Gram)","Black Gram (Urd Beans)","Dry Chillies","Copra","Kulthi(Horse Gram)","Paddy(Dhan)")
+
+
+```
+```{r}
+
+#2,3,14
+#7,9,10
+#1,4
+num_prod=seq(1,14,by=1)
+for (j in num_prod){
+  marketdat = c()
+  for (p in c(j)){
+  product = Product[p]
+  temp = read.xlsx(paste("/Users/somyasinghvi/Dropbox (MIT)/jingwen_tasks/organized/data/",product,"/13-17 month/",product," eleventh data.xlsx",sep = ""),sheet = 1) 
+  #temp$commodity = product
+  marketdat = rbind(marketdat,temp)
+}
+colnames(marketdat)[1] = "date"
+marketdat = marketdat[marketdat$market!="virtual",]
+temp = intervented%in%unique(marketdat$market)
+intervented1 = intervented[temp]
+interdate1 = interdate[temp]
+marketdat$inter = 0
+marketdat$date = as.Date(marketdat$date-25569,origin = "1970-01-01")
+for (i in 1:length(intervented1)){
+  temp = marketdat[marketdat$market==intervented1[i],]
+  marketdat[marketdat$market==intervented1[i],][temp$date>=(interdate1[i]+0),"inter"] = 1
+}
+marketdat$karn<-ifelse(marketdat$state%in%c("karnataka"),1,0)
+average_prices<-marketdat%>%group_by(date,karn)%>%dplyr::summarise(avg_price=mean(modal))
+ggplot(average_prices,aes(x=date,y=avg_price))+geom_line(aes(color=as.factor(karn)))+ geom_vline(xintercept = min(interdate))+scale_x_date(date_breaks = "months" , date_labels = "%d-%b-%y")+theme(axis.text.x = element_text(angle = 90, hjust = 1))
+ggsave(paste("/Users/somyasinghvi/Dropbox (MIT)/jingwen_tasks/organized/plots/month top figures/commodity",Product[p],"month.png",sep=""))
+}
+```
+```{r}
+#find whether parallel trend is true or not
+marketdat$karn<-ifelse(marketdat$state%in%c("karnataka"),1,0)
+average_prices<-marketdat%>%group_by(date,karn)%>%dplyr::summarise(avg_price=mean(modal))
+ggplot(average_prices,aes(x=date,y=avg_price))+geom_line(aes(color=as.factor(karn)))+ geom_vline(xintercept = min(interdate))+scale_x_date(date_breaks = "months" , date_labels = "%d-%b-%y")+theme(axis.text.x = element_text(angle = 90, hjust = 1))
+ggsave(paste("/Users/somyasinghvi/Dropbox (MIT)/jingwen_tasks/organized/plots/commodity",Product[p],".png"),sep="")
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+```{r}
+#try the results with all commodity combinations overall first
+#arhar, bengal gram and green gram
+#cotton and groundnut
+#jowar and maize
+# first on all states and then on states adjacent to karnataka
+
+try({
+  d = marketdat
+  d$date = as.factor(d$date)
+  d$month = as.factor(month(d$date))
+  d$year=as.factor(year(d$date))
+  d = d[!is.na(d$Per.Capita.GSDP),]
+  d = d[!is.na(d$production),]
+  d = d[!is.na(d$yield),]
+  d = d[!is.na(d$amount),]
+  d = d[!is.na(d$inter),]
+  d = d[!is.na(d$total_ar),]
+  d = d[!is.na(d$ptmrkt),]
+  d = d[!is.na(d$agrl_t),]
+  d = d[!is.na(d$lit_ru),]
+  #d = d%>%filter(d$state%in%c("karnataka","maharashtra","telangana","andhra pradesh"))
+  for (l in 20:32){
+    d = d[!is.na(d[,l]),]
+  }
+  fit1 = lm(log(1+modal)~ inter+
+              +market+date+Per.Capita.GSDP+production+yield+
+              log(1+amount)+ rainfall+rainfall_lead1+rainfall_lead2+rainfall_lead3+rainfall_lead4
+            +rainfall_lead5+rainfall_lead6+rainfall_lead7+rainfall_lead8+rainfall_lead9
+            +rainfall_lead10+rainfall_lead11+rainfall_lead12+lit_ru,
+            data=d)
+  
+  crse1 = clx(fit1,1, d$market)
+  crse1
+
+})
+
+```
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file).
+```{r}
+try({
+  d = marketdat
+  d$date = as.factor(d$date)
+  d$month = as.factor(month(d$date))
+  d$year=as.factor(year(d$date))
+  d = d[!is.na(d$Per.Capita.GSDP),]
+  d = d[!is.na(d$production),]
+  d = d[!is.na(d$yield),]
+  d = d[!is.na(d$amount),]
+  d = d[!is.na(d$inter),]
+  d = d[!is.na(d$total_ar),]
+  d = d[!is.na(d$ptmrkt),]
+  d = d[!is.na(d$agrl_t),]
+  d = d[!is.na(d$lit_ru),]
+  #d = d%>%filter(d$state%in%c("karnataka","maharashtra","telangana","andhra pradesh"))
+  for (l in 20:32){
+    d = d[!is.na(d[,l]),]
+  }
+  fit1 = lm(log(1+modal)~ inter+
+              +date+market+Per.Capita.GSDP+production+yield+
+              amount+ rainfall+rainfall_lead1+rainfall_lead2+rainfall_lead3+rainfall_lead4
+            +rainfall_lead5+rainfall_lead6+rainfall_lead7+rainfall_lead8+rainfall_lead9
+            +rainfall_lead10+rainfall_lead11+rainfall_lead12+total_ar+ptmrkt+agrl_t+lit_ru,
+            data=na.omit(d))
+  
+  crse1 = clx(fit1,1, na.omit(d)$market)
+  crse1
+})
+
+```
+
+```{r}
+try({
+        d = marketdat[marketdat$date<min(interdate),]
+        d$treat = d$market%in%intervented
+        d = d[order(d$date),]
+        d$time = as.numeric(as.factor((d$date)))
+        d$date = as.factor(d$date)
+        d = d[!is.na(d$Per.Capita.GSDP),]
+        d = d[!is.na(d$production),]
+        d = d[!is.na(d$yield),]
+        d = d[!is.na(d$amount),]
+        d = d[!is.na(d$inter),]
+        d = d[!is.na(d$total_ar),]
+        d = d[!is.na(d$ptmrkt),]
+        d = d[!is.na(d$agrl_t),]
+        d = d[!is.na(d$lit_ru),]
+        #d = d%>%filter(d$state%in%c("karnataka","maharashtra","telangana","andhra pradesh"))
+        for (l in 20:32){
+          d = d[!is.na(d[,l]),]
+        }
+        fit5 = lm(log(1+modal)~ time +treat:time+Per.Capita.GSDP+production+yield+
+                    amount+ rainfall+rainfall_lead1+rainfall_lead2+rainfall_lead3+rainfall_lead4
+                  +rainfall_lead5+rainfall_lead6+rainfall_lead7+rainfall_lead8+rainfall_lead9
+                  +rainfall_lead10+rainfall_lead11+rainfall_lead12+market+date+agrl_t+lit_ru+ptmrkt+total_ar-1,
+                  data=d)
+        crse5 = clx(fit5,1, d$market)
+        
+        tidy_lmfit <- tidy(crse5)
+      })
+```
+
+```{r}
+try({
+  d = marketdat
+  d$date = as.factor(d$date)
+  d$month = as.factor(month(d$date))
+  d$year=as.factor(year(d$date))
+  d = d[!is.na(d$Per.Capita.GSDP),]
+  d = d[!is.na(d$production),]
+  d = d[!is.na(d$yield),]
+  d = d[!is.na(d$amount),]
+  d = d[!is.na(d$inter),]
+  d = d%>%filter(d$state%in%c("karnataka","maharashtra","telangana","andhra pradesh"))
+  for (l in 20:32){
+    d = d[!is.na(d[,l]),]
+  }
+  fit1 = lm(log(1+amount)~ inter+
+              +month+year+market+date+Per.Capita.GSDP+production+yield+ rainfall+rainfall_lead1+rainfall_lead2+rainfall_lead3+rainfall_lead4
+            +rainfall_lead5+rainfall_lead6+rainfall_lead7+rainfall_lead8+rainfall_lead9
+            +rainfall_lead10+rainfall_lead11+rainfall_lead12+product,
+            data=d)
+  
+  crse1 = clx(fit1,1, d$market)
+  crse1
+})
+```
+```{r}
+
+#summary(fit5)
+#tidy_lmfit <- tidy(crse5)
+#summary(fit5)$coefficients[2]      
+```
+
+```{r}
+# now let's try for staples
+marketdat = c()
+#2,3,14
+#7,9,10
+#1,4
+for (p in c(2,3)){
+  product = Product[p]
+  temp = read.xlsx(paste("/Users/somyasinghvi/Dropbox (MIT)/jingwen_tasks/organized/data/",product,"/13-17 month/",product," eleventh data.xlsx",sep = ""),sheet = 1) 
+  #temp$commodity = product
+  marketdat = rbind(marketdat,temp)
+}
+colnames(marketdat)[1] = "date"
+marketdat = marketdat[marketdat$market!="virtual",]
+temp = intervented%in%unique(marketdat$market)
+intervented1 = intervented[temp]
+interdate1 = interdate[temp]
+marketdat$inter = 0
+marketdat$date = as.Date(marketdat$date-25569,origin = "1970-01-01")
+for (i in 1:length(intervented1)){
+  temp = marketdat[marketdat$market==intervented1[i],]
+  marketdat[marketdat$market==intervented1[i],][temp$date>=(interdate1[i]+0),"inter"] = 1
+}
+
+try({
+  d = marketdat
+  d$date = as.factor(d$date)
+  d$month = as.factor(month(d$date))
+  d$year=as.factor(year(d$date))
+  d = d[!is.na(d$Per.Capita.GSDP),]
+  d = d[!is.na(d$production),]
+  d = d[!is.na(d$yield),]
+  d = d[!is.na(d$amount),]
+  d = d[!is.na(d$inter),]
+  d = d%>%filter(d$state%in%c("karnataka","maharashtra","telangana","andhra pradesh"))
+  for (l in 20:32){
+    d = d[!is.na(d[,l]),]
+  }
+  fit1 = lm(log(1+modal)~ inter+
+              +month+year+market+date+Per.Capita.GSDP+production+yield+
+              log(1+amount)+ rainfall+rainfall_lead1+rainfall_lead2+rainfall_lead3+rainfall_lead4
+            +rainfall_lead5+rainfall_lead6+rainfall_lead7+rainfall_lead8+rainfall_lead9
+            +rainfall_lead10+rainfall_lead11+rainfall_lead12+product,
+            data=d)
+  
+  crse1 = clx(fit1,1, d$market)
+  crse1
+})
+
+```
+```{r}
+
+try({
+  d = marketdat
+  d$date = as.factor(d$date)
+  d$month = as.factor(month(d$date))
+  d$year=as.factor(year(d$date))
+  d = d[!is.na(d$Per.Capita.GSDP),]
+  d = d[!is.na(d$production),]
+  d = d[!is.na(d$yield),]
+  d = d[!is.na(d$amount),]
+  d = d[!is.na(d$inter),]
+  #d = d%>%filter(d$state%in%c("karnataka","maharashtra","telangana","andhra pradesh"))
+  for (l in 20:32){
+    d = d[!is.na(d[,l]),]
+  }
+  fit1 = lm(log(1+modal)~ inter+
+              +month+year+Per.Capita.GSDP+production+yield+
+              log(1+amount)+market+date+ rainfall+rainfall_lead1+rainfall_lead2+rainfall_lead3+rainfall_lead4
+            +rainfall_lead5+rainfall_lead6+rainfall_lead7+rainfall_lead8+rainfall_lead9
+            +rainfall_lead10+rainfall_lead11+rainfall_lead12+product,
+            data=d)
+  
+  crse1 = clx(fit1,1, d$market)
+  crse1
+})
+```
+```{r}
+try({
+  d = marketdat
+  d$date = as.factor(d$date)
+  d$month = as.factor(month(d$date))
+  d$year=as.factor(year(d$date))
+  d = d[!is.na(d$Per.Capita.GSDP),]
+  d = d[!is.na(d$production),]
+  d = d[!is.na(d$yield),]
+  d = d[!is.na(d$amount),]
+  d = d[!is.na(d$inter),]
+  #d = d%>%filter(d$state%in%c("karnataka","maharashtra","telangana","andhra pradesh"))
+  for (l in 20:32){
+    d = d[!is.na(d[,l]),]
+  }
+  fit1 = lm(log(1+amount)~ inter+
+              +month+year+market+date+Per.Capita.GSDP+production+yield+
+               rainfall+rainfall_lead1+rainfall_lead2+rainfall_lead3+rainfall_lead4
+            +rainfall_lead5+rainfall_lead6+rainfall_lead7+rainfall_lead8+rainfall_lead9
+            +rainfall_lead10+rainfall_lead11+rainfall_lead12+product,
+            data=d)
+  
+  crse1 = clx(fit1,1, d$market)
+  crse1
+})
+```
+
+```{r}
+#now try the lentils
+marketdat = c()
+#2,3,14
+#7,9,10
+#1,4
+for (p in c(5,7,9)){
+  product = Product[p]
+  temp = read.xlsx(paste("/Users/somyasinghvi/Dropbox (MIT)/jingwen_tasks/organized/data/",product,"/13-17 month/",product," eleventh data.xlsx",sep = ""),sheet = 1) 
+  #temp$commodity = product
+  marketdat = rbind(marketdat,temp)
+}
+colnames(marketdat)[1] = "date"
+marketdat = marketdat[marketdat$market!="virtual",]
+temp = intervented%in%unique(marketdat$market)
+intervented1 = intervented[temp]
+interdate1 = interdate[temp]
+marketdat$inter = 0
+marketdat$date = as.Date(marketdat$date-25569,origin = "1970-01-01")
+for (i in 1:length(intervented1)){
+  temp = marketdat[marketdat$market==intervented1[i],]
+  marketdat[marketdat$market==intervented1[i],][temp$date>=(interdate1[i]+0),"inter"] = 1
+}
+
+try({
+  d = marketdat
+  d$date = as.factor(d$date)
+  d$month = as.factor(month(d$date))
+  d$year=as.factor(year(d$date))
+  d = d[!is.na(d$Per.Capita.GSDP),]
+  d = d[!is.na(d$production),]
+  d = d[!is.na(d$yield),]
+  d = d[!is.na(d$amount),]
+  d = d[!is.na(d$inter),]
+  d = d%>%filter(d$state%in%c("karnataka","maharashtra","telangana","andhra pradesh"))
+  for (l in 20:32){
+    d = d[!is.na(d[,l]),]
+  }
+  fit1 = lm(log(1+modal)~ inter+
+              +month+year+market+date+Per.Capita.GSDP+production+yield+
+              log(1+amount)+ rainfall+rainfall_lead1+rainfall_lead2+rainfall_lead3+rainfall_lead4
+            +rainfall_lead5+rainfall_lead6+rainfall_lead7+rainfall_lead8+rainfall_lead9
+            +rainfall_lead10+rainfall_lead11+rainfall_lead12+product,
+            data=d)
+  
+  crse1 = clx(fit1,1, d$market)
+  crse1
+})
+```
+
+```{r}
+try({
+  d = marketdat
+  d$date = as.factor(d$date)
+  d$month = as.factor(month(d$date))
+  d$year=as.factor(year(d$date))
+  d = d[!is.na(d$Per.Capita.GSDP),]
+  d = d[!is.na(d$production),]
+  d = d[!is.na(d$yield),]
+  d = d[!is.na(d$amount),]
+  d = d[!is.na(d$inter),]
+  #d = d%>%filter(d$state%in%c("karnataka","maharashtra","telangana","andhra pradesh"))
+  for (l in 20:32){
+    d = d[!is.na(d[,l]),]
+  }
+  fit1 = lm(log(1+modal)~ inter+
+              +month+year+market+date+Per.Capita.GSDP+production+yield+
+              log(1+amount)+ rainfall+rainfall_lead1+rainfall_lead2+rainfall_lead3+rainfall_lead4
+            +rainfall_lead5+rainfall_lead6+rainfall_lead7+rainfall_lead8+rainfall_lead9
+            +rainfall_lead10+rainfall_lead11+rainfall_lead12+product,
+            data=d)
+  
+  crse1 = clx(fit1,1, d$market)
+  crse1
+})
+
+```
+```{r}
+try({
+  d = marketdat
+  d$date = as.factor(d$date)
+  d$month = as.factor(month(d$date))
+  d$year=as.factor(year(d$date))
+  d = d[!is.na(d$Per.Capita.GSDP),]
+  d = d[!is.na(d$production),]
+  d = d[!is.na(d$yield),]
+  d = d[!is.na(d$amount),]
+  d = d[!is.na(d$inter),]
+  #d = d%>%filter(d$state%in%c("karnataka","maharashtra","telangana","andhra pradesh"))
+  for (l in 20:32){
+    d = d[!is.na(d[,l]),]
+  }
+  fit1 = lm(log(1+amount)~ inter+
+              +month+year+market+date+Per.Capita.GSDP+production+yield+
+               rainfall+rainfall_lead1+rainfall_lead2+rainfall_lead3+rainfall_lead4
+            +rainfall_lead5+rainfall_lead6+rainfall_lead7+rainfall_lead8+rainfall_lead9
+            +rainfall_lead10+rainfall_lead11+rainfall_lead12+product,
+            data=d)
+  
+  crse1 = clx(fit1,1, d$market)
+  crse1
+})
+```
+
+```{r}
+#Product = c("Groundnut","Jowar(Sorghum)","Maize","Sunflower","Arhar (Tur-Red Gram)","Cotton","Green Gram #(Moong)","Arecanut(Betelnut-Supari)","Bengal Gram(Gram)","Black Gram (Urd Beans)","Dry #Chillies","Copra","Kulthi(Horse Gram)","Paddy(Dhan)")
+marketdat = c()
+#2,3,14
+#7,9,10
+#1,4
+for (p in c(6)){
+  product = Product[p]
+  temp = read.xlsx(paste("/Users/somyasinghvi/Dropbox (MIT)/jingwen_tasks/organized/data/",product,"/13-17 month/",product," eleventh data.xlsx",sep = ""),sheet = 1) 
+  #temp$commodity = product
+  marketdat = rbind(marketdat,temp)
+}
+colnames(marketdat)[1] = "date"
+marketdat = marketdat[marketdat$market!="virtual",]
+temp = intervented%in%unique(marketdat$market)
+intervented1 = intervented[temp]
+interdate1 = interdate[temp]
+marketdat$inter = 0
+marketdat$date = as.Date(marketdat$date-25569,origin = "1970-01-01")
+for (i in 1:length(intervented1)){
+  temp = marketdat[marketdat$market==intervented1[i],]
+  marketdat[marketdat$market==intervented1[i],][temp$date>=(interdate1[i]+0),"inter"] = 1
+}
+
+try({
+  d = marketdat
+  d$date = as.factor(d$date)
+  d$month = as.factor(month(d$date))
+  d$year=as.factor(year(d$date))
+  d = d[!is.na(d$Per.Capita.GSDP),]
+  d = d[!is.na(d$production),]
+  d = d[!is.na(d$yield),]
+  d = d[!is.na(d$amount),]
+  d = d[!is.na(d$inter),]
+  #d = d%>%filter(d$state%in%c("karnataka","maharashtra","telangana","andhra pradesh"))
+  for (l in 20:32){
+    d = d[!is.na(d[,l]),]
+  }
+  fit1 = lm(log(1+modal)~ inter+
+              +month+year+market+date+Per.Capita.GSDP+production+yield+
+              log(1+amount)+ rainfall+rainfall_lead1+rainfall_lead2+rainfall_lead3+rainfall_lead4
+            +rainfall_lead5+rainfall_lead6+rainfall_lead7+rainfall_lead8+rainfall_lead9
+            +rainfall_lead10+rainfall_lead11+rainfall_lead12,
+            data=d)
+  
+  crse1 = clx(fit1,1, d$market)
+  crse1
+})
+```
+```{r}
+marketdat = c()
+for (p in c(12)){
+  product = Product[p]
+  temp = read.xlsx(paste("/Users/somyasinghvi/Dropbox (MIT)/jingwen_tasks/organized/data/",product,"/13-17 month/",product," eleventh data.xlsx",sep = ""),sheet = 1) 
+  #temp$commodity = product
+  marketdat = rbind(marketdat,temp)
+}
+colnames(marketdat)[1] = "date"
+marketdat = marketdat[marketdat$market!="virtual",]
+temp = intervented%in%unique(marketdat$market)
+intervented1 = intervented[temp]
+interdate1 = interdate[temp]
+marketdat$inter = 0
+marketdat$date = as.Date(marketdat$date-25569,origin = "1970-01-01")
+for (i in 1:length(intervented1)){
+  temp = marketdat[marketdat$market==intervented1[i],]
+  marketdat[marketdat$market==intervented1[i],][temp$date>=(interdate1[i]+0),"inter"] = 1
+}
+
+leaddate1 = interdate1 %m+% months(-1)
+      leaddate2 = interdate1 %m+% months(-2)
+      leaddate3 = interdate1 %m+% months(-3)
+      leaddate4 = interdate1 %m+% months(-4)
+      lagdate1 = interdate1 %m+% months(1)
+      lagdate2 = interdate1 %m+% months(2)
+      lagdate3 = interdate1 %m+% months(3)
+      lagdate4 = interdate1 %m+% months(4)
+      marketdat$inter = 0
+      marketdat$lead0 = 0
+      marketdat$lead1 = 0
+      marketdat$lead2 = 0
+      marketdat$lead3 = 0
+      marketdat$lead4 = 0
+      marketdat$lead = 0
+      #marketdat$lag1 = 0
+      #marketdat$lag2 = 0
+      #marketdat$lag3 = 0
+      marketdat$lag = 0
+      marketdat$lagbeg = 0
+
+            for (i in 1:length(intervented1)){
+        temp = marketdat[marketdat$market==intervented1[i],]
+        marketdat[marketdat$market==intervented1[i],][temp$date>=(interdate1[i]+0),"inter"] = 1
+        marketdat[marketdat$market==intervented1[i],][temp$date==leaddate1[i],"lead1"] = 1
+        marketdat[marketdat$market==intervented1[i],][temp$date==leaddate2[i],"lead2"] = 1
+        marketdat[marketdat$market==intervented1[i],][temp$date==leaddate3[i],"lead3"] = 1
+        marketdat[marketdat$market==intervented1[i],][temp$date==leaddate4[i],"lead4"] = 1
+        marketdat[marketdat$market==intervented1[i],][temp$date<leaddate4[i],"lead"] = 1
+        #marketdat[marketdat$market==intervented1[i],][temp$date==lagdate1[i],"lag1"] = 1
+        #marketdat[marketdat$market==intervented1[i],][temp$date==lagdate2[i],"lag2"] = 1
+        #marketdat[marketdat$market==intervented1[i],][temp$date==lagdate3[i],"lag3"] = 1
+        #marketdat[marketdat$market==intervented1[i],][temp$date==lagdate4[i],"lag4"] = 1
+        #marketdat[marketdat$market==intervented1[i],][temp$date==lagdate4[i],"lage"] = 1
+        marketdat[marketdat$market==intervented1[i],][temp$date>lagdate4[i],"lag"] = 1
+        marketdat[marketdat$market==intervented1[i],][temp$date<=lagdate4[i]&temp$date>=interdate1[i],"lagbeg"] = 1
+        #marketdat[marketdat$market==intervented1[i],][temp$date==(interdate1[i]+0),"lead0"] = 1
+      }
+      market = unique(marketdat$market)
+      newd = c()
+
+
+```
+
+```{r}
+      try({
+        d = marketdat
+        d$date = as.factor(d$date)
+        d = d[!is.na(d$Per.Capita.GSDP),]
+        d = d[!is.na(d$production),]
+        d = d[!is.na(d$yield),]
+        d = d[!is.na(d$amount),]
+        d = d[!is.na(d$inter),]
+        d = d[!is.na(d$total_ar),]
+        d = d[!is.na(d$ptmrkt),]
+        d = d[!is.na(d$agrl_t),]
+        d = d[!is.na(d$lit_ru),]
+        for (l in 20:32){
+          d = d[!is.na(d[,l]),]
+        }
+        fit19 = lm(log(1+modal)~ lead+lead4+lead3+lead2+lead1+lagbeg+lag+date +production+yield+
+                     Per.Capita.GSDP+
+                     log(1+amount)+ rainfall+rainfall_lead1+rainfall_lead2+rainfall_lead3+rainfall_lead4
+                   +rainfall_lead5+rainfall_lead6+rainfall_lead7+rainfall_lead8+rainfall_lead9
+                   +rainfall_lead10+rainfall_lead11+rainfall_lead12+district+total_ar+ptmrkt+agrl_t+lit_ru+0,
+                   data=d)
+        
+        crse19 = clx(fit19,1, d$market)
+        crse19
+      })
+```
+
+```{r}
+
+```
+
